@@ -1,0 +1,53 @@
+---
+title: "Katalo: AI virtual staging API for real estate images"
+description: "Katalo turns raw property photos into professionally staged images via a REST API. Submit a source image, create a job, and receive signed output URLs."
+---
+
+Katalo is a server-to-server API that generates AI-staged real estate imagery. Your backend submits one source image, creates a generation job, and receives signed output URLs — delivered by webhook or available to poll. This documentation covers everything you need to integrate Katalo into your platform: authentication, the generation lifecycle, webhook delivery, operational limits, and billing.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/introduction">
+    Understand the API structure and make your first generation request.
+  </Card>
+  <Card title="API Keys" icon="key" href="/api-keys">
+    Create, store, and rotate your organization API key.
+  </Card>
+  <Card title="Generations" icon="image" href="/generations">
+    Full reference for create, get, and regenerate endpoints.
+  </Card>
+  <Card title="Webhooks" icon="bolt" href="/webhooks">
+    Receive signed completion events on your backend.
+  </Card>
+</CardGroup>
+
+## How it works
+
+<Steps>
+  <Step title="Ingest the source image">
+    Call `POST /api/v1/source-assets` with a `source_url` or multipart file upload. Poll `GET /api/v1/source-assets/{ingest_id}` until a `source_asset_id` is returned.
+  </Step>
+  <Step title="Create a generation job">
+    Call `POST /api/v1/generations` with your `source_asset_id` and workflow options such as room type, style preset, and capture type.
+  </Step>
+  <Step title="Wait for completion">
+    Receive a signed webhook callback when the job completes, or poll `GET /api/v1/generations/{job_id}` until it reaches `succeeded` or `failed`.
+  </Step>
+  <Step title="Use the outputs">
+    Read the signed output URLs from the response. Copy assets into your own storage if you need retention beyond the URL expiry window.
+  </Step>
+</Steps>
+
+<CardGroup cols={2}>
+  <Card title="Reliability & Limits" icon="shield-check" href="/reliability">
+    Rate limits, idempotency, concurrency caps, and retry guidance.
+  </Card>
+  <Card title="Usage & Billing" icon="chart-bar" href="/usage-billing">
+    Read usage summaries and billing ledger records via API.
+  </Card>
+  <Card title="Errors" icon="triangle-exclamation" href="/errors">
+    HTTP status codes, error payloads, and retry rules.
+  </Card>
+  <Card title="OpenAPI Reference" icon="file-code" href="/openapi">
+    Download the canonical YAML spec for validation and client generation.
+  </Card>
+</CardGroup>

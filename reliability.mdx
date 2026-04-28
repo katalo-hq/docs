@@ -1,0 +1,75 @@
+---
+title: "Reliability: limits, idempotency, and retries"
+description: "Katalo's rate limits, concurrent job caps, idempotency behavior, and retry rules — everything you need to build a resilient API integration."
+keywords: ["rate limits", "idempotency", "retries", "concurrency", "429", "backoff", "signed URLs"]
+---
+
+Katalo enforces rate limits and a concurrent job cap to keep the platform stable for all users. Use idempotency keys on write requests to prevent duplicates, and follow the retry rules below to handle errors without creating data integrity issues.
+
+---
+
+## Rate limits
+
+Each route has its own per-minute limit. All limits apply at the organization level.
+
+| Route | Limit |
+|-------|-------|
+| `POST /api/v1/source-assets` | 120 requests / minute |
+| `POST /api/v1/generations` | 120 requests / minute |
+| `POST /api/v1/generations/{job_id}/regenerate` | 120 requests / minute |
+| `GET /api/v1/generations/{job_id}` | 1,200 requests / minute |
+| `GET /api/v1/usage/summary` | 120 requests / minute |
+| `GET /api/v1/billing/events` | 120 requests / minute |
+| `source_url` fetch jobs | 60 requests / minute |
+
+When you exceed a limit, the API returns `429 Too Many Requests`. The error payload includes a `retry_after` value in seconds — wait at least that long before sending another request to that route.
+
+### Concurrent job cap
+
+Your organization can have at most **50 jobs in-flight simultaneously**. Submitting a new job when you are at the cap returns a `429` with a `retry_after` value. Use this value to back off before retrying.
+
+---
+
+## Idempotency
+
+Include an `Idempotency-Key` header on all write requests (`POST /api/v1/source-assets`, `POST /api/v1/generations`, and `POST /api/v1/generations/{job_id}/regenerate`) to make them safe to retry.
+
+| Behavior | Result |
+|----------|--------|
+| Same key, same payload | Returns the original job instead of creating a duplicate |
+| Same key, different payload | Returns `409 idempotency_conflict` |
+| Retention window | Idempotency records are retained for 24 hours |
+
+<Tip>
+Use a unique key per logical operation — for example, a UUID generated when you first attempt a request. If a network error prevents you from reading the response, retry with the same key to safely recover the original result.
+</Tip>
+
+---
+
+## Retry rules
+
+Follow these rules to avoid creating duplicates or amplifying errors:
+
+**1. Retry `429` responses.**
+Read the `retry_after` value in the error payload and wait at least that long before sending another request. If the request is a write, keep the original `Idempotency-Key`.
+
+**2. Retry `5xx` responses with exponential backoff and jitter.**
+Use exponential backoff with jitter to spread out retries. If you are repeating a write, keep the original `Idempotency-Key` to prevent duplicate jobs.
+
+**3. Do not blindly retry `4xx` responses.**
+Validation errors, authorization failures, entitlement errors, and idempotency conflicts all require a client-side fix before retrying. Retrying the same request without changes will produce the same error.
+
+---
+
+## Signed URL expiry
+
+Signed output URLs expire 15 minutes after a job completes. Do not assume the first URL returned remains valid for the entire lifetime of your workflow.
+
+If a URL has expired before you copy the asset:
+
+1. Call `GET /api/v1/generations/{job_id}` to re-read the job.
+2. The response contains fresh signed URLs for all outputs.
+
+<Note>
+Copy output assets into your own storage as soon as you receive them. Relying on Katalo's signed URLs for long-term access is not recommended.
+</Note>

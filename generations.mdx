@@ -1,0 +1,280 @@
+---
+title: "Generation jobs: create, poll, and regenerate outputs"
+description: "Learn how Katalo's generation lifecycle works: ingest a source asset, create a job, receive outputs via webhook or polling, and regenerate jobs."
+keywords: ["generations", "virtual staging", "source asset", "ingest", "regenerate", "workflow"]
+---
+
+Katalo processes your real estate images through a two-step lifecycle: ingest a source asset once, then create as many generation jobs as you need from that asset. This page covers the full generation lifecycle — from submitting a source image through receiving and iterating on outputs.
+
+## Generation lifecycle
+
+The recommended flow separates ingestion from generation so the same source asset is reusable across multiple jobs without re-uploading the original image.
+
+<Steps>
+  <Step title="Ingest the source image">
+    Call `POST /api/v1/source-assets` with a multipart file upload or a `source_url`. The endpoint creates an ingest job and returns an `ingest_id`.
+  </Step>
+  <Step title="Poll until ready">
+    Call `GET /api/v1/source-assets/{ingest_id}` and repeat until the status reaches `ready`. The response includes a `source_asset_id` you can reuse indefinitely.
+  </Step>
+  <Step title="Create a generation job">
+    Call `POST /api/v1/generations` with your `source_asset_id` and the workflow options for the job. The endpoint returns a `job_id` immediately.
+  </Step>
+  <Step title="Wait for completion">
+    Receive the signed callback when the job completes, or poll `GET /api/v1/generations/{job_id}` until the status reaches `succeeded` or `failed`.
+  </Step>
+  <Step title="Iterate">
+    Call `POST /api/v1/generations/{job_id}/regenerate` to create a new job from the same source asset with different options.
+  </Step>
+</Steps>
+
+Full endpoint reference:
+
+| Step | Endpoint | What it does |
+|------|----------|--------------|
+| Ingest | `POST /api/v1/source-assets` | Creates a source ingest job and yields a reusable `source_asset_id` |
+| Create | `POST /api/v1/generations` | Starts a new generation job from `source_asset_id` and returns `job_id` immediately |
+| Complete | Webhook or `GET /api/v1/generations/{job_id}` | Wait for a signed callback or poll until `succeeded` or `failed` |
+| Recover | `GET /api/v1/generations/{job_id}` | Re-read final state if webhook delivery failed or a signed URL expired |
+| Iterate | `POST /api/v1/generations/{job_id}/regenerate` | Create a new job from the same source asset |
+
+<Note>
+Inline `file` and `source_url` fields on `POST /api/v1/generations` are still accepted but transitional. These requests can return `status=ingesting` while the source is processed. Use the two-step ingest flow for production integrations.
+</Note>
+
+---
+
+## Create a generation
+
+### Request fields
+
+<ParamField body="source_asset_id" type="string">
+  The reusable source asset identifier returned after ingest. Use this in the recommended two-step flow. Mutually exclusive with `file` and `source_url`.
+</ParamField>
+
+<ParamField body="source_url" type="string">
+  Publicly accessible URL to the source image. Transitional — can return `status=ingesting`. Mutually exclusive with `file` and `source_asset_id`.
+</ParamField>
+
+<ParamField body="workflow" type="string" required>
+  The processing pipeline to use. Accepted values: `staging`, `pro_capture`.
+</ParamField>
+
+<ParamField body="capture_type" type="string" required>
+  The input image type. Accepted values: `photo`, `panorama360`, `floorplan`.
+</ParamField>
+
+<ParamField body="mode" type="string">
+  Staging mode. Only valid for `workflow=staging` and `capture_type=photo`. Panorama and floorplan jobs derive their mode from `capture_type`. Accepted values: `refurnish`, `renovate`, `clean`.
+</ParamField>
+
+<ParamField body="room_types" type="string[]">
+  One or more canonical room names to stage. Multi-room requests must stay within one room family. Not required when `mode=clean`.
+
+  **Single room:** any canonical room value.
+
+  **Open plan family:** `Living Room`, `Kitchen`, `Dining Room`.
+
+  **Wet rooms family:** `Bathroom`, `Shower`, `Toilet`.
+</ParamField>
+
+<ParamField body="style_preset" type="string">
+  The style to apply. Required for `workflow=staging` and `capture_type=panorama360`. Optional for `workflow=staging` and `capture_type=photo`. Ignored for `mode=clean`.
+
+  Accepted values: `modern`, `scandi`, `boho`, `country`, `industrial`, `mediterranean`, `luxury`, `eclectic`, `japandia`.
+</ParamField>
+
+<ParamField body="include_alternates" type="boolean">
+  When `true`, the job returns alternate outputs alongside the primary result.
+</ParamField>
+
+<ParamField body="reference" type="string">
+  Your external identifier for this job. Echoed back in the response and webhook payload.
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  Arbitrary key-value pairs for your own records. Echoed back without modification.
+</ParamField>
+
+<ParamField body="webhook" type="object">
+  Webhook configuration for this job.
+
+  <Expandable title="properties">
+    <ParamField body="webhook.url" type="string">
+      The callback URL to receive the completion event. Must be a publicly reachable HTTPS endpoint. Overrides the organization default for this job.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Example
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST "https://app.katalo.ai/api/v1/generations" \
+  -H "Authorization: Bearer $KATALO_API_KEY" \
+  -H "Idempotency-Key: create-001" \
+  -H "Content-Type: application/json" \
+  --data '{
+  "source_asset_id": "sa_01JXJOBABCDEFGHIJKL0000001",
+  "workflow": "staging",
+  "capture_type": "photo",
+  "mode": "refurnish",
+  "room_types": ["Living Room", "Kitchen"],
+  "style_preset": "modern",
+  "include_alternates": true,
+  "reference": "listing-123-lr-1",
+  "metadata": {
+    "listing_id": "listing-123",
+    "partner": "acme"
+  },
+  "webhook": {
+    "url": "https://partner.example.com/webhooks/katalo"
+  }
+}'
+```
+
+</CodeGroup>
+
+### Input exclusivity
+
+Exactly one of `file`, `source_url`, or `source_asset_id` is allowed per request. Including more than one returns a validation error.
+
+---
+
+## Workflow and mode rules
+
+### Workflow combinations
+
+| `workflow` | `capture_type` | `mode` required? | `style_preset` required? |
+|------------|----------------|-----------------|--------------------------|
+| `staging` | `photo` | Yes (`refurnish`, `renovate`, or `clean`) | Optional (ignored for `clean`) |
+| `staging` | `panorama360` | Derived from `capture_type` — do not set | Yes |
+| `staging` | `floorplan` | Derived from `capture_type` — do not set | No |
+| `pro_capture` | `photo` | No | No |
+
+### Clean photo requests
+
+A `mode=clean` request removes furniture from the image. It does not require `room_types` or `style_preset`.
+
+### Multi-room requests
+
+When you include more than one room in `room_types`, all rooms must belong to the same family:
+
+| Family | Allowed rooms |
+|--------|--------------|
+| Open plan | `Living Room`, `Kitchen`, `Dining Room` |
+| Wet rooms | `Bathroom`, `Shower`, `Toilet` |
+
+---
+
+## Get a generation
+
+Poll this endpoint to check job status or read output URLs.
+
+<CodeGroup>
+
+```bash cURL
+curl -X GET "https://app.katalo.ai/api/v1/generations/job_01JXJOBABCDEFGHIJKL0123456" \
+  -H "Authorization: Bearer $KATALO_API_KEY"
+```
+
+</CodeGroup>
+
+### Response fields
+
+<ResponseField name="job_id" type="string" required>
+  Stable public identifier for this generation job.
+</ResponseField>
+
+<ResponseField name="status" type="string" required>
+  Current job status. Terminal values: `succeeded`, `failed`. Non-terminal: `pending`, `ingesting`, `processing`.
+</ResponseField>
+
+<ResponseField name="outputs" type="object[]">
+  Returned images once the job succeeds. Each entry includes a signed `image_url`.
+
+  <Expandable title="properties">
+    <ResponseField name="outputs[].image_url" type="string">
+      Signed URL for the output image. Expires 15 minutes after the job completes.
+    </ResponseField>
+    <ResponseField name="outputs[].is_alternate" type="boolean">
+      `true` if this is an alternate output rather than the primary result.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="failure" type="object">
+  Terminal error payload. Present only when `status=failed`.
+
+  <Expandable title="properties">
+    <ResponseField name="failure.code" type="string">
+      Machine-readable failure code.
+    </ResponseField>
+    <ResponseField name="failure.retry_hint" type="string">
+      Guidance on whether and how to retry.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="reference" type="string">
+  Your original external identifier, echoed back.
+</ResponseField>
+
+<ResponseField name="metadata" type="object">
+  Your original metadata, echoed back without modification.
+</ResponseField>
+
+<Warning>
+Signed output URLs expire 15 minutes after the job completes. Copy assets into your own storage if you need longer retention. If a URL has expired, call `GET /api/v1/generations/{job_id}` again to receive fresh signed URLs.
+</Warning>
+
+---
+
+## Regenerate
+
+`POST /api/v1/generations/{job_id}/regenerate` creates a new job from the same source asset as the parent job. Use it to produce another approved output with different options without re-uploading the source.
+
+The endpoint always returns a new public `job_id`. Allowed override fields depend on the parent job's `workflow` and `capture_type`.
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST "https://app.katalo.ai/api/v1/generations/job_01JXJOBABCDEFGHIJKL0123456/regenerate" \
+  -H "Authorization: Bearer $KATALO_API_KEY" \
+  -H "Idempotency-Key: regenerate-001" \
+  -H "Content-Type: application/json" \
+  --data '{
+  "mode": "renovate",
+  "room_types": ["Living Room", "Dining Room"],
+  "style_preset": "mediterranean",
+  "reference": "listing-123-lr-redesign-2",
+  "metadata": {
+    "note": "second pass"
+  }
+}'
+```
+
+</CodeGroup>
+
+### Regenerate request fields
+
+<ParamField body="mode" type="string">
+  Override the staging mode for the new job. Only valid when the parent job used `workflow=staging` and `capture_type=photo`.
+</ParamField>
+
+<ParamField body="room_types" type="string[]">
+  Override the room selection for the new job. Must stay within one room family.
+</ParamField>
+
+<ParamField body="style_preset" type="string">
+  Override the style for the new job. Must be a canonical style preset value.
+</ParamField>
+
+<ParamField body="reference" type="string">
+  New external identifier for this regeneration job.
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  New metadata for this regeneration job.
+</ParamField>

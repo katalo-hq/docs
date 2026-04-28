@@ -1,0 +1,150 @@
+---
+title: "Usage and billing API: summary and event ledger"
+description: "Use Katalo's read-only usage and billing endpoints to monitor plan consumption, inspect job totals, and reconcile billing events for your organization."
+keywords: ["usage", "billing", "plan capacity", "billing events", "reconciliation", "overage"]
+---
+
+Katalo provides two read-only endpoints for monitoring your organization's API consumption and billing activity. Use `GET /api/v1/usage/summary` for a real-time snapshot of your plan capacity, and `GET /api/v1/billing/events` to retrieve the detailed ledger of billable events for reconciliation.
+
+---
+
+## Usage summary
+
+`GET /api/v1/usage/summary` returns a snapshot of your organization's current billing period, plan capacity, and job totals.
+
+<CodeGroup>
+
+```bash cURL
+curl https://app.katalo.ai/api/v1/usage/summary \
+  -H "Authorization: Bearer $KATALO_API_KEY"
+```
+
+</CodeGroup>
+
+### Response fields
+
+<ResponseField name="access.enabled" type="boolean" required>
+  Whether your organization is entitled to API access.
+</ResponseField>
+
+<ResponseField name="billing_period" type="object" required>
+  The active billing window for this summary.
+
+  <Expandable title="properties">
+    <ResponseField name="billing_period.start_at" type="string">
+      ISO 8601 timestamp for the start of the current billing period.
+    </ResponseField>
+    <ResponseField name="billing_period.end_at" type="string">
+      ISO 8601 timestamp for the end of the current billing period.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="usage" type="object" required>
+  Plan capacity and consumption figures for the current billing period.
+
+  <Expandable title="properties">
+    <ResponseField name="usage.included" type="number">
+      Total units included in your plan for the current billing period.
+    </ResponseField>
+    <ResponseField name="usage.consumed" type="number">
+      Units consumed so far in the current billing period.
+    </ResponseField>
+    <ResponseField name="usage.overage" type="number">
+      Units consumed beyond your plan's included capacity.
+    </ResponseField>
+    <ResponseField name="usage.remaining" type="number">
+      Units remaining before you reach your plan's included capacity.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="jobs" type="object" required>
+  API job totals for the current billing period.
+
+  <Expandable title="properties">
+    <ResponseField name="jobs.total" type="number">
+      Total number of generation jobs created.
+    </ResponseField>
+    <ResponseField name="jobs.succeeded" type="number">
+      Jobs that reached the `succeeded` terminal state.
+    </ResponseField>
+    <ResponseField name="jobs.failed" type="number">
+      Jobs that reached the `failed` terminal state.
+    </ResponseField>
+    <ResponseField name="jobs.outputs_returned" type="number">
+      Total number of output images returned to the caller across all jobs.
+    </ResponseField>
+    <ResponseField name="jobs.regenerate_count" type="number">
+      Number of regeneration jobs created from existing source assets.
+    </ResponseField>
+    <ResponseField name="jobs.cache_hit_count" type="number">
+      Number of times an approved-cache result was reused instead of running a new generation.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Billing events
+
+`GET /api/v1/billing/events` returns the detailed ledger of usage events for your organization. Use this endpoint to reconcile charges and audit individual job costs.
+
+<CodeGroup>
+
+```bash cURL
+curl https://app.katalo.ai/api/v1/billing/events \
+  -H "Authorization: Bearer $KATALO_API_KEY"
+```
+
+</CodeGroup>
+
+### Response fields
+
+<ResponseField name="event_id" type="string" required>
+  Public identifier for this usage event. Use as a primary dedupe key when importing records.
+</ResponseField>
+
+<ResponseField name="job_id" type="string" required>
+  The public generation job identifier associated with this event.
+</ResponseField>
+
+<ResponseField name="source_asset_id" type="string" required>
+  The public source asset identifier associated with this event.
+</ResponseField>
+
+<ResponseField name="usage_type" type="string" required>
+  The billable usage bucket this event belongs to.
+</ResponseField>
+
+<ResponseField name="config_fingerprint" type="string" required>
+  Stable hash of the job configuration. Use alongside `event_id` and `job_id` for reconciliation.
+</ResponseField>
+
+<ResponseField name="billable" type="boolean" required>
+  Whether this event was billable. Cache hits and failed jobs may not be billable depending on your plan.
+</ResponseField>
+
+<ResponseField name="unit_price_usd" type="string" required>
+  Dollar value per unit for this event.
+</ResponseField>
+
+<ResponseField name="amount_usd" type="string" required>
+  Total dollar amount charged for this event.
+</ResponseField>
+
+---
+
+## Reconciliation
+
+Use the following three fields together as your reconciliation keys when importing billing events into your accounting or analytics system:
+
+| Key | Purpose |
+|-----|---------|
+| `event_id` | Deduplicate billing records |
+| `job_id` | Join billing events to generation job records |
+| `config_fingerprint` | Confirm that the billed configuration matches what you submitted |
+
+<Tip>
+Import billing events incrementally by paginating `GET /api/v1/billing/events` and keying on `event_id`. Store the last imported `event_id` as a cursor for subsequent requests.
+</Tip>

@@ -1,0 +1,97 @@
+---
+title: "OpenAPI spec: download, generate clients, validate"
+description: "Download the Katalo OpenAPI YAML spec to validate requests, generate typed clients, and keep your integration in sync with the server contract."
+keywords: ["openapi", "yaml", "spec", "client generation", "sdk", "openapi-typescript", "oapi-codegen"]
+---
+
+Katalo publishes a machine-readable OpenAPI spec that serves as the canonical contract for every path, schema, enum, and error payload in the API. Use it to generate typed clients, validate requests in tests, and verify exact field names whenever the documentation and your implementation disagree.
+
+## Download the spec
+
+<CardGroup cols={2}>
+  <Card title="Open the spec" icon="arrow-up-right-from-square" href="https://www.katalo.ai/api/v1/openapi">
+    View the raw YAML in your browser.
+  </Card>
+  <Card title="Download YAML" icon="file-arrow-down" href="https://www.katalo.ai/api/v1/openapi">
+    Save the file locally for offline tooling or CI pipelines.
+  </Card>
+</CardGroup>
+
+## Paths covered
+
+The spec defines every public route in the Katalo API.
+
+| Path | Purpose |
+|------|---------|
+| `POST /api/v1/source-assets` | Create a source asset ingest job. |
+| `GET /api/v1/source-assets/{ingest_id}` | Read a source asset ingest job. |
+| `POST /api/v1/generations` | Create a generation job. |
+| `GET /api/v1/generations/{job_id}` | Read a generation job. |
+| `POST /api/v1/generations/{job_id}/regenerate` | Create a new job from the same source asset. |
+| `GET /api/v1/usage/summary` | Read the current billing-period summary. |
+| `GET /api/v1/billing/events` | Read the API billing ledger. |
+| `GET /api/v1/openapi` | Download the YAML spec. |
+
+## Contract alignment
+
+The spec is updated whenever the request or response model changes. Treat it as the authoritative source for:
+
+- Exact field names and their casing
+- Allowed enum values (for example, `workflow`, `capture_type`, `mode`, and `style_preset`)
+- Required versus optional fields per endpoint
+- Schema shapes for nested objects and arrays
+- Normalized error payload structures
+
+<Note>
+  If the human-readable docs and the YAML spec disagree on field names, enums, or schema shapes, treat the YAML spec as correct.
+</Note>
+
+## Common use cases
+
+### Fetch the spec
+
+<CodeGroup>
+
+```bash curl
+curl https://www.katalo.ai/api/v1/openapi -o katalo-openapi.yaml
+```
+
+```python python
+import httpx
+
+response = httpx.get("https://www.katalo.ai/api/v1/openapi")
+with open("katalo-openapi.yaml", "wb") as f:
+    f.write(response.content)
+```
+
+</CodeGroup>
+
+### Generate a TypeScript client
+
+<CodeGroup>
+
+```bash openapi-typescript
+npx openapi-typescript https://www.katalo.ai/api/v1/openapi -o katalo.d.ts
+```
+
+```bash openapi-generator
+npx @openapitools/openapi-generator-cli generate \
+  -i https://www.katalo.ai/api/v1/openapi \
+  -g typescript-fetch \
+  -o ./src/katalo-client
+```
+
+</CodeGroup>
+
+### Generate a Go client
+
+```bash oapi-codegen
+oapi-codegen \
+  --package katalo \
+  --generate types,client \
+  https://www.katalo.ai/api/v1/openapi > katalo/client.gen.go
+```
+
+### Validate requests in tests
+
+Feed the spec into any OpenAPI-compliant validator (for example, `openapi-core` for Python or `express-openapi-validator` for Node.js) to assert that your test fixtures match the server contract before you deploy.

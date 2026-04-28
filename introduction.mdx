@@ -1,0 +1,169 @@
+---
+title: "Katalo API overview: structure, auth, and lifecycle"
+description: "Learn how the Katalo API is structured: authentication, the source-asset-first job lifecycle, webhook and polling delivery, and the five core endpoints."
+keywords: ["katalo", "api overview", "virtual staging api", "real estate api", "integration guide"]
+---
+
+The Katalo public API is a server-to-server integration for AI virtual staging. This page explains how the API is structured — covering authentication, the recommended flow for creating and retrieving generation jobs, delivery options, workflow types, and the key operational concerns you need to plan for before writing your first request.
+
+## How the API works
+
+The API is organized around three objects: source assets, generation jobs, and their outputs. Your backend ingests one source image to create a source asset, uses that asset to create a generation job, then either polls for the result or receives it by webhook.
+
+<CardGroup cols={3}>
+  <Card title="1 source image per job" icon="image">
+    Every generation job is tied to exactly one original image, represented by a `source_asset_id`.
+  </Card>
+  <Card title="5 core endpoints" icon="code">
+    Source asset ingest, source asset read, generation create, generation read, and regenerate.
+  </Card>
+  <Card title="2 delivery modes" icon="bolt">
+    Receive results via signed webhook callbacks, or poll the generation endpoint directly.
+  </Card>
+</CardGroup>
+
+## Recommended integration flow
+
+<Steps>
+  <Step title="Ingest the source image">
+    Call `POST /api/v1/source-assets` with either a `source_url` or a multipart `file` field. The endpoint returns an `ingest_id` immediately.
+  </Step>
+  <Step title="Wait for the source asset">
+    Poll `GET /api/v1/source-assets/{ingest_id}` until the response includes a `source_asset_id`. Once the asset exists, you can reuse it for any number of future jobs without re-uploading.
+  </Step>
+  <Step title="Create a generation job">
+    Call `POST /api/v1/generations` with your `source_asset_id` and the workflow fields valid for that request shape — such as `room_types`, `style_preset`, and `capture_type`.
+  </Step>
+  <Step title="Wait for completion">
+    In production, receive a signed webhook callback when the job reaches a terminal state. As a fallback, poll `GET /api/v1/generations/{job_id}` until the status is `succeeded` or `failed`.
+  </Step>
+  <Step title="Read the outputs">
+    Consume the signed output URLs from the response. The API returns only publishable outputs: one primary approved output and, if requested, at most one approved alternate.
+  </Step>
+  <Step title="Regenerate when needed">
+    To get another output from the same source image, call `POST /api/v1/generations/{job_id}/regenerate` rather than re-uploading the asset.
+  </Step>
+</Steps>
+
+## Quick example
+
+The following two requests cover the core flow: ingest a source image, then create a staging job.
+
+<CodeGroup>
+
+```bash ingest source asset
+curl https://app.katalo.ai/api/v1/source-assets \
+  -H "Authorization: Bearer $KATALO_API_KEY" \
+  -H "Idempotency-Key: listing-123-source-001" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_url": "https://cdn.example.com/listing.jpg"
+  }'
+```
+
+```bash create generation job
+# Use the source_asset_id returned after polling source-assets/{ingest_id}
+
+curl https://app.katalo.ai/api/v1/generations \
+  -H "Authorization: Bearer $KATALO_API_KEY" \
+  -H "Idempotency-Key: listing-123-generation-001" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_asset_id": "src_...",
+    "workflow": "staging",
+    "capture_type": "photo",
+    "mode": "refurnish",
+    "room_types": ["Living Room", "Kitchen"],
+    "style_preset": "modern",
+    "reference": "listing-123-lr-1"
+  }'
+```
+
+</CodeGroup>
+
+<Note>
+  Always include an `Idempotency-Key` on write requests. If a network failure causes a retry, the server returns the original response instead of creating a duplicate job.
+</Note>
+
+## Source asset paths
+
+There are two ways to associate a source image with a generation job.
+
+| Path | How it works | When to use it |
+|------|-------------|----------------|
+| Recommended | Ingest with `POST /api/v1/source-assets`, then pass `source_asset_id` to `POST /api/v1/generations`. | All new integrations. Keeps fetch, decode, and dedup work off the generation request path. |
+| Compatibility | Pass `file` or `source_url` inline on `POST /api/v1/generations`. | Existing integrations only. May return `status=ingesting` and `source_asset_id=null` while the asset processes. |
+
+<Warning>
+  The inline `file` and `source_url` fields on `POST /api/v1/generations` are transitional. Build new integrations against the source-asset-first path.
+</Warning>
+
+## Workflow types
+
+The `workflow` field on a generation request controls the request shape and which fields are valid.
+
+| Workflow | Purpose | Field restrictions |
+|----------|---------|-------------------|
+| `staging` | Virtual staging. The default path for most integrations. | Required and allowed fields depend on `capture_type`. |
+| `pro_capture` | Photo-only capture jobs with a narrower request shape. | Rejects `mode`, `room_types`, and `style_preset`. |
+| `regenerate` | Create a new job from an existing `job_id`, reusing the same source asset. | Allowed overrides depend on the parent job's workflow and `capture_type`. |
+
+## Integration patterns
+
+<CardGroup cols={2}>
+  <Card title="CRM and brokerage software" icon="building">
+    Create or regenerate listing imagery without sending agents into the Katalo UI.
+  </Card>
+  <Card title="Marketplace and portal backends" icon="store">
+    Attach generation jobs to listing ingestion, moderation, or merchandising flows.
+  </Card>
+  <Card title="Batch and queue workers" icon="list-check">
+    Fan jobs out from your own workers and route results into storage, search, or product UI.
+  </Card>
+  <Card title="White-label product features" icon="tag">
+    Expose staging to your users while keeping credentials, policy, and delivery logic on your backend.
+  </Card>
+</CardGroup>
+
+## Key integration concerns
+
+Plan for the following before you write production code.
+
+| Concern | What to do |
+|---------|-----------|
+| Authentication | Store the organization API key on your server. Send it as a bearer token on every protected request. Never expose it to browser or mobile clients. |
+| Asynchronous completion | Use webhooks in production. Fall back to polling if webhook delivery is unavailable. |
+| Correlation | Set `reference` and `metadata` on each job so a completed result maps back to the correct listing or workflow state in your system. |
+| Asset persistence | Signed output URLs expire. Copy assets into your own storage if you need durable access. |
+| Retry policy | Retry `429` and retryable `5xx` responses with backoff. Treat `4xx` validation errors as terminal — do not retry them. |
+| Usage reconciliation | Use the usage summary and billing ledger endpoints for internal reporting, support tooling, or customer chargeback. |
+
+## What the API returns
+
+The API exposes only publishable outputs — internal attempts and rejected results are not visible. Each completed job returns:
+
+- **`job_id`** — stable public identifier, use it for polling and regeneration
+- **`outputs`** — the primary approved image and, optionally, one approved alternate; each output includes a signed URL
+- **`failure`** — a terminal error payload with a machine-readable code and retry hint, present only when the job fails
+- **`metadata`** — your original metadata, echoed back unchanged
+
+<Warning>
+  Signed output URLs expire after 15 minutes. Copy the assets into your own storage before the URL expires if your workflow needs longer access.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API keys" icon="key" href="/api-keys">
+    Create a credential, store it correctly, and plan for rotation.
+  </Card>
+  <Card title="Generations" icon="image" href="/generations">
+    Full reference for create, get, and regenerate request contracts.
+  </Card>
+  <Card title="Webhooks" icon="bolt" href="/webhooks">
+    Verify signatures and handle asynchronous completion events.
+  </Card>
+  <Card title="Reliability & limits" icon="shield-check" href="/reliability">
+    Rate limits, idempotency, concurrency caps, and retry guidance.
+  </Card>
+</CardGroup>

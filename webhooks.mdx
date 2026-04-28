@@ -1,0 +1,193 @@
+---
+title: "Webhooks: handle signed Katalo generation events"
+description: "Configure Katalo webhooks to receive signed generation.completed and generation.failed events on your backend, and verify HMAC-SHA256 signatures securely."
+keywords: ["webhooks", "callbacks", "HMAC", "signature verification", "generation events", "polling"]
+---
+
+Katalo notifies your backend when a generation job reaches a terminal state by sending a signed HTTP POST to your callback URL. This page explains how to configure delivery, verify signatures, handle event payloads, and recover from missed or expired callbacks.
+
+## Delivery mechanisms
+
+| Mechanism | When to use it |
+|-----------|----------------|
+| Webhook | Default for production. Best when your backend can expose a public callback endpoint. |
+| Polling | Useful for local development, simple integrations, or as a fallback when webhook delivery fails. |
+| GET after webhook | Use to recover state, fetch fresh signed URLs, or confirm final status after consumer downtime. |
+
+<Tip>
+A webhook tells your backend that a job reached a terminal state. It is not the authoritative record for the lifetime of the job. Call `GET /api/v1/generations/{job_id}` at any time to re-read the current job state.
+</Tip>
+
+## Typical production flow
+
+<Steps>
+  <Step title="Ingest and create">
+    Ingest the source image, then create the generation job with a `webhook.url` in the request body.
+  </Step>
+  <Step title="Persist the job_id">
+    Store the `job_id` returned by `POST /api/v1/generations` so you can correlate incoming events.
+  </Step>
+  <Step title="Verify and handle the callback">
+    When the event arrives, verify the `x-katalo-signature` header, then process the payload.
+  </Step>
+  <Step title="Repair or replay when needed">
+    If your consumer was unavailable or a signed URL has expired, call `GET /api/v1/generations/{job_id}` to re-read the job and receive fresh URLs.
+  </Step>
+</Steps>
+
+## Configure the callback URL
+
+Set a default callback URL in the Katalo dashboard. Any `POST /api/v1/generations` or regenerate request can override the URL for one-off routing by including a `webhook.url` in the request body.
+
+<Note>
+Katalo rejects delivery to localhost, private IP ranges, and link-local targets. Your callback URL must be a publicly reachable HTTPS endpoint.
+</Note>
+
+---
+
+## Signature verification
+
+Every webhook delivery includes an `x-katalo-signature` header. The value is an HMAC-SHA256 hex digest computed over the raw request body using your organization's webhook secret.
+
+Verify the signature before processing any event. Your organization has one shared secret that applies to every webhook delivery until you rotate it.
+
+<Warning>
+Always use a constant-time comparison function when checking the signature. Standard string equality is vulnerable to timing attacks.
+</Warning>
+
+<CodeGroup>
+
+```typescript TypeScript
+import crypto from "crypto";
+
+function verifyWebhook(body: string, signature: string, secret: string) {
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(body)
+    .digest("hex");
+  return crypto.timingSafeEqual(
+    Buffer.from(expected, "hex"),
+    Buffer.from(signature, "hex")
+  );
+}
+```
+
+```python Python
+import hashlib
+import hmac
+import os
+
+from fastapi import FastAPI, Header, HTTPException, Request
+
+app = FastAPI()
+WEBHOOK_SECRET = os.environ["KATALO_WEBHOOK_SECRET"]
+
+def verify_signature(raw_body: bytes, signature: str) -> bool:
+    expected = hmac.new(
+        WEBHOOK_SECRET.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+@app.post("/webhooks/katalo")
+async def katalo_webhook(
+    request: Request,
+    x_katalo_signature: str = Header(alias="x-katalo-signature"),
+):
+    raw_body = await request.body()
+
+    if not verify_signature(raw_body, x_katalo_signature):
+        raise HTTPException(status_code=401, detail="invalid signature")
+
+    event = await request.json()
+    job_id = event["job_id"]
+    event_type = event["event_type"]
+
+    if event_type == "generation.completed":
+        outputs = event["outputs"]
+        # Persist outputs or copy them into your own storage here.
+    elif event_type == "generation.failed":
+        failure = event["failure"]
+        # Mark the job as failed and record the failure code here.
+
+    return {"ok": True, "job_id": job_id}
+```
+
+</CodeGroup>
+
+---
+
+## Webhook payload
+
+### Event types
+
+| `event_type` | Meaning |
+|--------------|---------|
+| `generation.completed` | The job succeeded and outputs are available. |
+| `generation.failed` | The job reached a terminal failure state. |
+
+### Payload fields
+
+<ResponseField name="event_type" type="string" required>
+  `generation.completed` or `generation.failed`.
+</ResponseField>
+
+<ResponseField name="job_id" type="string" required>
+  The public job identifier. Use this to correlate parallel runs.
+</ResponseField>
+
+<ResponseField name="source_asset_id" type="string" required>
+  The public source asset identifier for the request.
+</ResponseField>
+
+<ResponseField name="reference" type="string">
+  Your original external identifier, echoed back if you sent one.
+</ResponseField>
+
+<ResponseField name="outputs" type="object[]">
+  Signed image URLs for passing outputs. Present when `event_type=generation.completed`.
+
+  <Expandable title="properties">
+    <ResponseField name="outputs[].image_url" type="string">
+      Signed URL for the output image. Short-lived — copy assets to your own storage promptly.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="failure" type="object">
+  Terminal failure details. Present when `event_type=generation.failed`.
+
+  <Expandable title="properties">
+    <ResponseField name="failure.code" type="string">
+      Machine-readable failure code.
+    </ResponseField>
+    <ResponseField name="failure.retry_hint" type="string">
+      Guidance on whether and how to retry.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="metadata" type="object">
+  Your original metadata echoed back in the payload without modification.
+</ResponseField>
+
+---
+
+## Operational guidance
+
+| Concern | Guidance |
+|---------|----------|
+| Deduplication | Use `job_id` plus `event_type` as your primary dedupe key. |
+| Internal correlation | Use `reference` and `metadata` to reconnect the event to your internal records. |
+| Consumer downtime | If your consumer was unavailable, re-read the job later with `GET /api/v1/generations/{job_id}`. |
+| Expired URLs | If a signed output URL expired before you copied it, call `GET /api/v1/generations/{job_id}` again to receive fresh URLs. |
+
+## Delivery rules
+
+| Rule | Behavior |
+|------|----------|
+| Public destinations only | Localhost, private IPs, and link-local targets are rejected at delivery time. |
+| Shared secret | One organization secret is reused for every webhook signature until you rotate it. |
+| Retries | Transient delivery failures are retried with bounded exponential backoff. |
+| Allowlist | If your organization defines a webhook hostname allowlist, delivery is restricted to that set. |

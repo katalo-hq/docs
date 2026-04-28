@@ -1,0 +1,61 @@
+{
+  "projectType": "api-service",
+  "projectName": "Katalo",
+  "projectDescription": "Katalo is a server-to-server API for generating AI-staged real estate imagery — submit a source image, create a generation job, and receive signed output URLs via webhook or polling.",
+  "theme": "luma",
+  "primaryColor": "#142c24",
+  "lightColor": "#ffffff",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "api-keys"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "generations",
+              "webhooks",
+              "reliability",
+              "usage-billing"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "errors",
+              "openapi"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "AI virtual staging for real estate images (photo, panorama360, floorplan)",
+    "Two-step source asset ingest with deduplication and reuse",
+    "Asynchronous job delivery via signed webhooks or polling",
+    "Per-job regeneration from the same source asset",
+    "Organization-scoped API keys with rotation and revocation",
+    "Usage summary and billing ledger endpoints for reconciliation",
+    "Idempotency key support on all write endpoints",
+    "Rate limiting with retry-after headers"
+  ],
+  "publicApiSurface": [
+    "POST /api/v1/source-assets",
+    "GET /api/v1/source-assets/{ingest_id}",
+    "POST /api/v1/generations",
+    "GET /api/v1/generations/{job_id}",
+    "POST /api/v1/generations/{job_id}/regenerate",
+    "GET /api/v1/usage/summary",
+    "GET /api/v1/billing/events",
+    "GET /api/v1/openapi"
+  ]
+}

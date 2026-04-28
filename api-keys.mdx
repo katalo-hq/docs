@@ -1,0 +1,106 @@
+---
+title: "Authenticate with Katalo: create and manage API keys"
+description: "Set up the organization-scoped bearer token that authenticates every Katalo API request, and learn how to issue, store, rotate, and revoke keys securely."
+keywords: ["katalo api key", "bearer token", "api authentication", "rotate api key", "revoke api key"]
+---
+
+Every protected Katalo endpoint uses the same organization-scoped API key. The key authenticates source-asset ingest, generation create and read, regenerate, usage, and billing requests. Keys belong to organizations, not individual users, so a single credential covers your entire backend integration.
+
+Send the key on every authenticated request as a bearer token:
+
+```http
+Authorization: Bearer kat_live_<publicKeyId>.<secret>
+```
+
+<Warning>
+  The raw secret is shown only once when you issue the key. If you lose it, issue a new key — you cannot recover the old value.
+</Warning>
+
+## Set up your API key
+
+<Steps>
+  <Step title="Open the API settings page">
+    Navigate to [the organization API settings](https://www.katalo.ai/en/organization/api) and confirm that API access is enabled for your organization.
+  </Step>
+  <Step title="Issue the key">
+    Click **Issue API key** and name it after the integration or environment that will use it — for example, `production-listing-worker` or `staging-crm`. A descriptive name makes the key easier to audit and rotate later.
+  </Step>
+  <Step title="Copy the secret immediately">
+    Copy the full key value before leaving the page. The secret is shown once only. If you lose it before storing it, issue a new key.
+  </Step>
+  <Step title="Store it in your environment">
+    Add the key to your server environment or secret manager. Never commit it to source control.
+
+    <Tabs>
+      <Tab title="macOS / Linux">
+        ```bash
+        export KATALO_API_KEY="your-api-key-here"
+        ```
+      </Tab>
+      <Tab title="Windows (PowerShell)">
+        ```powershell
+        $Env:KATALO_API_KEY = "your-api-key-here"
+        ```
+      </Tab>
+      <Tab title=".env file">
+        ```bash
+        KATALO_API_KEY=your-api-key-here
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  <Step title="Read the key in your application code">
+    Load the key from the environment at runtime. Do not hard-code it in source files.
+
+    <CodeGroup>
+
+    ```python read key from environment
+    import os
+
+    api_key = os.environ["KATALO_API_KEY"]
+    ```
+
+    ```javascript read key from environment
+    const apiKey = process.env.KATALO_API_KEY;
+    ```
+
+    </CodeGroup>
+  </Step>
+</Steps>
+
+## Key lifecycle
+
+<CardGroup cols={3}>
+  <Card title="Rotate" icon="arrows-rotate">
+    Issue a replacement key when you need to refresh credentials, separate environments, or move an integration to a different service. Update the new key in your environment before revoking the old one to avoid downtime.
+  </Card>
+  <Card title="Revoke" icon="ban">
+    Revoke a key to cut off access immediately — use this if a secret was exposed or the integration is no longer in service. Revocation is instant and irreversible.
+  </Card>
+  <Card title="Audit" icon="magnifying-glass">
+    Use the dashboard key metadata — including the key name and last-used timestamps — to keep access reviewable and identify credentials that are no longer in use.
+  </Card>
+</CardGroup>
+
+## Security rules
+
+| Rule | Why it matters |
+|------|----------------|
+| No direct browser calls | A bearer token in browser code is a credential leak. Route all Katalo API calls through your backend. |
+| No permissive CORS strategy | Your backend should authenticate to Katalo and enforce client-level authorization before proxying requests. |
+| One organization-scoped credential | A centralized key lifecycle is easier to rotate, review, and revoke than per-service credentials. |
+
+<Tip>
+  Treat the API key like any other backend secret. Restrict which services can read it, rotate it if exposure is possible, and do not reuse the same credential across unrelated environments.
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Review the full API lifecycle and integration patterns.
+  </Card>
+  <Card title="Generations" icon="image" href="/generations">
+    Start creating virtual staging jobs with your new key.
+  </Card>
+</CardGroup>

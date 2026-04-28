@@ -1,0 +1,53 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "luma",
+  "name": "Katalo",
+  "logo": {
+    "light": "https://media.brand.dev/32ca3a45-d630-4ed8-b184-19ef2ac10a4e.png",
+    "dark": "https://media.brand.dev/32ca3a45-d630-4ed8-b184-19ef2ac10a4e.png"
+  },
+  "favicon": "https://media.brand.dev/0ed48478-0ea5-4b91-a995-f97351cf94be.png",
+  "colors": {
+    "primary": "#142c24",
+    "light": "#ffffff"
+  },
+  "navbar": {
+    "primary": {
+      "type": "button",
+      "label": "Get API Key",
+      "href": "https://www.katalo.ai/en/organization/api"
+    }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "api-keys"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "generations",
+              "webhooks",
+              "reliability",
+              "usage-billing"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "errors",
+              "openapi"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

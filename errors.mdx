@@ -1,0 +1,68 @@
+---
+title: "Error codes and retry rules for the Katalo API"
+description: "A complete reference for every HTTP status code, normalized error code, and retry rule the Katalo API returns when a request fails."
+keywords: ["errors", "error codes", "http status codes", "retry", "rate limit", "validation error"]
+---
+
+Katalo returns a normalized error payload for every failed request. This page covers every HTTP status code the API emits, the matching machine-readable error code in the response body, and the rules that determine whether a request is safe to retry.
+
+## HTTP status codes
+
+| Status | Meaning | Retry? |
+|--------|---------|--------|
+| 401 | The API key is missing or invalid. | No |
+| 403 | The organization is not entitled to API access. | No |
+| 409 | The idempotency key was reused with a different payload. | No |
+| 422 | The request payload violated a contract rule. | No |
+| 429 | The per-key, per-org, or per-IP limit was exceeded. | Yes |
+| 500 | A server-side issue prevented the request from completing. | Yes |
+
+## Error codes
+
+Every error response includes a `code` field with a machine-readable string you can match in your application logic.
+
+| Code | When it appears |
+|------|----------------|
+| `unauthorized` | The API key is missing or invalid. |
+| `forbidden` | The organization is not entitled to API access. |
+| `idempotency_conflict` | The idempotency key was reused with a different payload. |
+| `validation_error` | The request payload violated a contract rule. |
+| `rate_limited` | The per-key, per-org, or per-IP limit was exceeded. |
+| `internal_error` | A server-side issue prevented the request from completing. |
+
+## Error code details
+
+<AccordionGroup>
+  <Accordion title="unauthorized — 401">
+    The `Authorization` header is absent or the bearer token does not match any active API key in your organization. Check that you are sending the header in the form `Authorization: Bearer <key>` and that the key has not been revoked.
+  </Accordion>
+  <Accordion title="forbidden — 403">
+    Your organization's account does not have API access enabled. Contact Katalo support to verify your entitlements before retrying.
+  </Accordion>
+  <Accordion title="idempotency_conflict — 409">
+    You sent an `Idempotency-Key` header that was already used for a different request payload within the 24-hour retention window. Generate a new idempotency key for the new request instead of reusing the old one.
+  </Accordion>
+  <Accordion title="validation_error — 422">
+    One or more fields in the request body violated the API contract — for example, a missing required field, an unrecognized enum value, or an input exclusivity conflict. Read the `details` array in the response for field-level messages.
+  </Accordion>
+  <Accordion title="rate_limited — 429">
+    Your request exceeded a per-key, per-organization, or per-IP rate limit. Read the `retry_after` value in the error payload and wait at least that many seconds before sending the next request.
+  </Accordion>
+  <Accordion title="internal_error — 500">
+    An unexpected server-side failure prevented the request from completing. Use exponential backoff with jitter and reuse the original idempotency key if the request was a write.
+  </Accordion>
+</AccordionGroup>
+
+## Retry guidance
+
+<Warning>
+  **401, 403, 409, and 422 are terminal.** Retrying without fixing the request or your access model will produce the same error. Diagnose the root cause before sending the request again.
+</Warning>
+
+<Note>
+  **429 — rate limited.** Read the `retry_after` field in the error payload. Wait at least that many seconds before retrying. Do not use a fixed delay; respect the advertised window.
+</Note>
+
+<Note>
+  **500 — server error.** Retry with exponential backoff and jitter. If the original request was a write, keep the same `Idempotency-Key` so the server can deduplicate if the first attempt actually succeeded.
+</Note>
